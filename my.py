@@ -16,6 +16,9 @@ from sklearn.calibration import CalibratedClassifierCV
 from time import strftime
 from sklearn.externals import joblib
 
+
+import sys
+
 import logging
 logging.basicConfig(format=u'[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s', level=logging.NOTSET)
 
@@ -65,22 +68,18 @@ class ItemProcessor:
 
 
 # params
-numrows=300000
-stemm=True
+numrows=None
+stemm=False
 correctWord=False
-generateFratures = True
+generateFratures = False
 
-file_id = strftime("%d%H%M%S")
 root_folder = "."
 
 
-train_file_name = "%s/avito_train/avito_train.tsv" % root_folder
-tets_file_name = "%s/avito_train/avito_test.tsv" % root_folder
-output_file = "%s/avito_solution/avito_solution%s.csv" % (root_folder,file_id)
-pkl_out_file = "%s/avito_train_pkl/num-%s_stemm-%s_corr-%s.pkl" % (root_folder,numrows,stemm,correctWord)
+def genFratures(pkl_out_file):
+    train_file_name = "%s/avito_train/avito_train.tsv" % root_folder
+    tets_file_name = "%s/avito_train/avito_test.tsv" % root_folder
 
-
-def genFratures():
     logging.info("ReadData...")
 
     dataTrain = pd.read_table(train_file_name, nrows=numrows)
@@ -109,9 +108,33 @@ def genFratures():
 
     return (trainFeatures, trainTargets, testFeatures)
 
+def processCmArgs():
+    numrows=None
+    stemm=False
+    correctWord=False
+    generateFratures = False
+    for (i,a) in enumerate(sys.argv):
+        if (a == "-s"):
+            stemm=True
+        if (a == "-c"):
+            correctWord = True
+        if (a == "-g"):
+            generateFratures = True
+        if (a == "-n"):
+            numrows=int(sys.argv[i+1])
+    return (stemm, correctWord, numrows, generateFratures)
+
 def main():
+    (stemm, correctWord, numrows, generateFratures) = processCmArgs()
+    logging.info("params: stemm %s, correct=%s numrows=%s gen=%s" % (stemm, correctWord, numrows, generateFratures))
+
+    file_id = strftime("%d%H%M%S")
+    output_file = "%s/avito_solution/avito_solution%s.csv" % (root_folder,file_id)
+
+    pkl_out_file = "%s/avito_train_pkl/num-%s_stemm-%s_corr-%s.pkl" % (root_folder,numrows,stemm,correctWord)
+
     if generateFratures:
-        (trainFeatures, trainTargets, testFeatures) = genFratures()
+        (trainFeatures, trainTargets, testFeatures) = genFratures(pkl_out_file)
     else:
         logging.info("read dump from %s" % pkl_out_file)
         (trainFeatures, trainTargets, testFeatures) = joblib.load(pkl_out_file)
