@@ -67,16 +67,10 @@ class ItemProcessor:
         return getWords(str(s), stemmRequired, correctWordRequired)
 
 
-# params
-numrows=None
-stemm=False
-correctWord=False
-generateFratures = False
-
 root_folder = "."
 
 
-def genFratures(pkl_out_file):
+def genFratures(pkl_out_file, stemm, correctWord, numrows):
     train_file_name = "%s/avito_train/avito_train.tsv" % root_folder
     tets_file_name = "%s/avito_train/avito_test.tsv" % root_folder
 
@@ -84,6 +78,7 @@ def genFratures(pkl_out_file):
 
     dataTrain = pd.read_table(train_file_name, nrows=numrows)
     dataTest = pd.read_table(tets_file_name)
+    testItemIds = dataTest['itemid']
 
     trainTargets = dataTrain["is_blocked"]
     p = ItemProcessor()
@@ -104,12 +99,12 @@ def genFratures(pkl_out_file):
     testFeatures = vectorizer.fit_transform(testTexts)
 
     logging.info("dump data to %s" % pkl_out_file)
-    joblib.dump((trainFeatures, trainTargets, testFeatures), pkl_out_file)
+    joblib.dump((trainFeatures, trainTargets, testFeatures, testItemIds), pkl_out_file)
 
-    return (trainFeatures, trainTargets, testFeatures)
+    return (trainFeatures, trainTargets, testFeatures, testItemIds)
 
 def processCmArgs():
-    numrows=None
+    numrows=300000
     stemm=False
     correctWord=False
     generateFratures = False
@@ -134,14 +129,14 @@ def main():
     pkl_out_file = "%s/avito_train_pkl/num-%s_stemm-%s_corr-%s.pkl" % (root_folder,numrows,stemm,correctWord)
 
     if generateFratures:
-        (trainFeatures, trainTargets, testFeatures) = genFratures(pkl_out_file)
+        (trainFeatures, trainTargets, testFeatures, testItemIds) = genFratures(pkl_out_file,stemm, correctWord, numrows)
     else:
         logging.info("read dump from %s" % pkl_out_file)
-        (trainFeatures, trainTargets, testFeatures) = joblib.load(pkl_out_file)
+        (trainFeatures, trainTargets, testFeatures, testItemIds) = joblib.load(pkl_out_file)
 
     logging.info("Fitting...")
 
-    swm = svm.LinearSVC(C=0.2)
+    swm = svm.LinearSVC(C=0.3)
     clf = CalibratedClassifierCV(swm)
 
     clf.fit(trainFeatures, trainTargets)
@@ -149,14 +144,18 @@ def main():
     logging.info("Predicting...")
 
     predicted_scores = clf.predict_proba(testFeatures).T[1]
-    dataTest['res'] = predicted_scores
+
+    dataPred = pd.DataFrame()
+
+    dataPred['res'] = predicted_scores
+    dataPred['itemid'] = testItemIds
     logging.info("Sotring...")
 
-    dataTest_s = dataTest.sort_values('res', ascending=False)
+    dataPred = dataPred.sort_values('res', ascending=False)
 
     logging.info("write result to %s..." % output_file)
 
-    dataTest_s['itemid'].to_csv(output_file, index=False, header=['id'])
+    dataPred['itemid'].to_csv(output_file, index=False, header=['id'])
 
 
 if __name__ == "__main__":
