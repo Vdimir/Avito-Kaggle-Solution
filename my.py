@@ -1,7 +1,12 @@
+# coding: utf-8
+
 import pandas as pd
 import nltk
 import numpy as np
-from sklearn import *
+from sklearn.linear_model import SGDClassifier
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn import svm
+
 import nltk
 import re
 from nltk import SnowballStemmer
@@ -10,6 +15,9 @@ from sklearn.feature_extraction.text import (CountVectorizer,HashingVectorizer)
 from sklearn.calibration import CalibratedClassifierCV
 from time import strftime
 from sklearn.externals import joblib
+
+import logging
+logging.basicConfig(format=u'[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s', level=logging.NOTSET)
 
 
 stopwords = frozenset(word for word in nltk.corpus.stopwords.words("russian") if word != u"не")
@@ -39,41 +47,91 @@ def getWords(text, stemmRequired=False, correctWordRequired=False):
 
     return " ".join(words)
 
+class ItemProcessor:
+    def __init__(self):
+        self.itemsProcessed = 0
+        self.totalItems = 0
+
+    def reset(self, total=0):
+        self.itemsProcessed = 0
+        self.totalItems = total
+
+    def getWords(self,s, stemmRequired=False, correctWordRequired=False):
+        self.itemsProcessed += 1
+        if (self.itemsProcessed % 1000 == 0):
+            p = self.itemsProcessed/ self.totalItems if self.totalItems != 0 else -1
+            logging.info("%d/%d items processed (%f%%)" % (self.itemsProcessed, self.totalItems, p*100))
+        return getWords(str(s), stemmRequired, correctWordRequired)
 
 
+# params
+numrows=300000
+stemm=True
+correctWord=False
+generateFratures = True
 
-def main():
+file_id = strftime("%d%H%M%S")
+root_folder = "."
 
-    file_id = strftime("%d%H%M%S")
-    rootFolder = "/home/vdimir/edu/ml/avito"
 
-    trainFileName = "%s/avito_train/avito_train.tsv" % rootFolder
-    tetsFileName = "%s/avito_train/avito_test.tsv" % rootFolder
-    output_file = "%s/avito_solution/avito_solution%s.csv" % (rootFolder,file_id)
-    # pkl_out_file = "%s/avito_train_pkl/train_data.pkl" % rootFolder
+train_file_name = "%s/avito_train/avito_train.tsv" % root_folder
+tets_file_name = "%s/avito_train/avito_test.tsv" % root_folder
+output_file = "%s/avito_solution/avito_solution%s.csv" % (root_folder,file_id)
+pkl_out_file = "%s/avito_train_pkl/num-%s_stemm-%s_corr-%s.pkl" % (root_folder,numrows,stemm,correctWord)
 
-    # --------
 
-    dataTrain = pd.read_table(trainFileName, nrows=300000)
-    dataTest = pd.read_table(tetsFileName)
+def genFratures():
+    logging.info("ReadData...")
 
+    dataTrain = pd.read_table(train_file_name, nrows=numrows)
+    dataTest = pd.read_table(tets_file_name)
+
+    trainTargets = dataTrain["is_blocked"]
+    p = ItemProcessor()
     vectorizer = HashingVectorizer(analyzer = "word", tokenizer = None,\
-            preprocessor = (lambda s: getWords(str(s))), binary = True)
+            preprocessor = (lambda s: p.getWords(s,stemm, correctWord)), binary = True)
+
 
     texts = (dataTrain['title']+" "+dataTrain['description']).apply(str)
     testTexts = (dataTest['title']+" "+dataTest['description']).apply(str)
 
+
+    logging.info("vectorizing dataTest...")
+    p.reset(len(texts))
     trainFeatures = vectorizer.fit_transform(texts)
+
+    logging.info("vectorizing dataTest...")
+    p.reset(len(testTexts))
     testFeatures = vectorizer.fit_transform(testTexts)
+
+    logging.info("dump data to %s" % pkl_out_file)
+    joblib.dump((trainFeatures, trainTargets, testFeatures), pkl_out_file)
+
+    return (trainFeatures, trainTargets, testFeatures)
+
+def main():
+    if generateFratures:
+        (trainFeatures, trainTargets, testFeatures) = genFratures()
+    else:
+        logging.info("read dump from %s" % pkl_out_file)
+        (trainFeatures, trainTargets, testFeatures) = joblib.load(pkl_out_file)
+
+    logging.info("Fitting...")
 
     swm = svm.LinearSVC(C=0.2)
     clf = CalibratedClassifierCV(swm)
 
-    clf.fit(trainFeatures, dataTrain["is_blocked"])
+    clf.fit(trainFeatures, trainTargets)
+
+    logging.info("Predicting...")
 
     predicted_scores = clf.predict_proba(testFeatures).T[1]
     dataTest['res'] = predicted_scores
+    logging.info("Sotring...")
+
     dataTest_s = dataTest.sort_values('res', ascending=False)
+
+    logging.info("write result to %s..." % output_file)
 
     dataTest_s['itemid'].to_csv(output_file, index=False, header=['id'])
 
